@@ -1,9 +1,10 @@
 //! Types related to task management
 use super::TaskContext;
-use crate::config::TRAP_CONTEXT_BASE;
+use crate::config::{MAX_SYSCALL_NUM, TRAP_CONTEXT_BASE};
 use crate::mm::{
     kernel_stack_position, MapPermission, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE,
 };
+use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
 
 /// The task control block (TCB) of a task.
@@ -28,6 +29,9 @@ pub struct TaskControlBlock {
 
     /// Program break
     pub program_brk: usize,
+
+    /// Task information
+    pub task_info: TaskInfo,
 }
 
 impl TaskControlBlock {
@@ -63,6 +67,7 @@ impl TaskControlBlock {
             base_size: user_sp,
             heap_bottom: user_sp,
             program_brk: user_sp,
+            task_info: TaskInfo::default(),
         };
         // prepare TrapContext in user space
         let trap_cx = task_control_block.get_trap_cx();
@@ -109,4 +114,28 @@ pub enum TaskStatus {
     Running,
     /// exited
     Exited,
+}
+
+pub struct TaskInfo {
+    syscall_times: UPSafeCell<[isize; MAX_SYSCALL_NUM]>,
+}
+
+impl Default for TaskInfo {
+    fn default() -> Self {
+        Self {
+            syscall_times: unsafe { UPSafeCell::new([0; MAX_SYSCALL_NUM]) },
+        }
+    }
+}
+
+impl TaskInfo {
+    /// add the syscall time
+    pub fn add_syscall_time(&self, syscall_id: usize) {
+        self.syscall_times.exclusive_access()[syscall_id] += 1;
+    }
+
+    /// get the syscall time
+    pub fn get_syscall_time(&self, syscall_id: usize) -> isize {
+        self.syscall_times.exclusive_access()[syscall_id]
+    }
 }

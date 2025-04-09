@@ -202,3 +202,20 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
 }
+
+/// Get the current 'Running' task
+pub fn current_task() -> &'static TaskControlBlock {
+    let inner = TASK_MANAGER.inner.exclusive_access();
+    unsafe { &*(&inner.tasks[inner.current_task] as *const _) }
+}
+
+/// 取得当前任务的 MemorySet
+pub fn current_task_memory_set() -> &'static mut crate::mm::MemorySet {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let current_task = inner.current_task;
+    unsafe {
+        core::mem::transmute::<&mut crate::mm::MemorySet, &'static mut crate::mm::MemorySet>(
+            &mut inner.tasks[current_task].memory_set,
+        )
+    }
+}
