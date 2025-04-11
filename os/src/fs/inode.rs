@@ -28,7 +28,26 @@ pub struct OSInodeInner {
     inode: Arc<Inode>,
 }
 
+/// l
+pub fn linkat(name: &str, inode: &Inode) {
+    ROOT_INODE.linkat(name, inode);
+}
+
+/// u
+pub fn unlinkat(name: &str) {
+    ROOT_INODE.unlinkat(name);
+}
+
+/// o
+pub fn link_count(inode_id: u32) -> u32 {
+    ROOT_INODE.link_count(inode_id)
+}
+
 impl OSInode {
+    /// get the inode
+    pub fn get_inode(&self) -> Arc<Inode> {
+        self.inner.exclusive_access().inode.clone()
+    }
     /// create a new inode in memory
     pub fn new(readable: bool, writable: bool, inode: Arc<Inode>) -> Self {
         Self {

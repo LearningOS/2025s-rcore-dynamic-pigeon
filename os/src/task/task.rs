@@ -1,7 +1,8 @@
 //! Types related to task management & Functions for completely changing TCB
+use super::task_ext::{TaskInfo, TaskPriority};
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
+use crate::config::{MAX_SYSCALL_NUM, TRAP_CONTEXT_BASE};
 use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
@@ -64,13 +65,19 @@ pub struct TaskControlBlockInner {
 
     /// It is set when active exit or execution error occurs
     pub exit_code: i32,
-    pub fd_table: Vec<Option<Arc<dyn File + Send + Sync>>>,
+    pub fd_table: Vec<Option<Arc<dyn File>>>,
 
     /// Heap bottom
     pub heap_bottom: usize,
 
     /// Program break
     pub program_brk: usize,
+
+    /// Task information
+    pub task_info: TaskInfo,
+
+    /// Task priority
+    pub task_priority: TaskPriority,
 }
 
 impl TaskControlBlockInner {
@@ -85,6 +92,20 @@ impl TaskControlBlockInner {
     }
     pub fn is_zombie(&self) -> bool {
         self.get_status() == TaskStatus::Zombie
+    }
+
+    pub fn add_syscall_num(&mut self, syscall_id: usize) {
+        if syscall_id < MAX_SYSCALL_NUM {
+            self.task_info.syscall_num[syscall_id] += 1;
+        }
+    }
+
+    pub fn get_syscall_num(&self, syscall_id: usize) -> isize {
+        if syscall_id < MAX_SYSCALL_NUM {
+            self.task_info.syscall_num[syscall_id]
+        } else {
+            0
+        }
     }
     pub fn alloc_fd(&mut self) -> usize {
         if let Some(fd) = (0..self.fd_table.len()).find(|fd| self.fd_table[*fd].is_none()) {
@@ -135,6 +156,8 @@ impl TaskControlBlock {
                     ],
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    task_info: TaskInfo::default(),
+                    task_priority: TaskPriority::default(),
                 })
             },
         };
@@ -148,6 +171,17 @@ impl TaskControlBlock {
             trap_handler as usize,
         );
         task_control_block
+    }
+
+    /// Spawn a new process
+    pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> Arc<Self> {
+        let task = Arc::new(Self::new(elf_data));
+
+        // 设置父子关系
+        task.inner_exclusive_access().parent = Some(Arc::downgrade(self));
+        self.inner_exclusive_access().children.push(task.clone());
+
+        task
     }
 
     /// Load a new elf to replace the original application address space and start execution
@@ -192,7 +226,7 @@ impl TaskControlBlock {
         let kernel_stack = kstack_alloc();
         let kernel_stack_top = kernel_stack.get_top();
         // copy fd table
-        let mut new_fd_table: Vec<Option<Arc<dyn File + Send + Sync>>> = Vec::new();
+        let mut new_fd_table: Vec<Option<Arc<dyn File>>> = Vec::new();
         for fd in parent_inner.fd_table.iter() {
             if let Some(file) = fd {
                 new_fd_table.push(Some(file.clone()));
@@ -216,6 +250,8 @@ impl TaskControlBlock {
                     fd_table: new_fd_table,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    task_info: TaskInfo::default(),
+                    task_priority: TaskPriority::default(),
                 })
             },
         });

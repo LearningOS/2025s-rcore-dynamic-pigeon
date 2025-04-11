@@ -244,6 +244,9 @@ where
     pub fn get_end(&self) -> T {
         self.r
     }
+    pub fn contains(&self, t: T) -> bool {
+        self.l <= t && t < self.r
+    }
 }
 impl<T> IntoIterator for SimpleRange<T>
 where
