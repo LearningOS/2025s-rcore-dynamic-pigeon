@@ -1,7 +1,8 @@
 //! Types related to task management & Functions for completely changing TCB
+use super::task_ext::{TaskInfo, TaskPriority};
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
+use crate::config::{MAX_SYSCALL_NUM, TRAP_CONTEXT_BASE};
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
@@ -68,6 +69,12 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// Task information
+    pub task_info: TaskInfo,
+
+    /// Task priority
+    pub task_priority: TaskPriority,
 }
 
 impl TaskControlBlockInner {
@@ -84,6 +91,20 @@ impl TaskControlBlockInner {
     }
     pub fn is_zombie(&self) -> bool {
         self.get_status() == TaskStatus::Zombie
+    }
+
+    pub fn add_syscall_num(&mut self, syscall_id: usize) {
+        if syscall_id < MAX_SYSCALL_NUM {
+            self.task_info.syscall_num[syscall_id] += 1;
+        }
+    }
+
+    pub fn get_syscall_num(&self, syscall_id: usize) -> isize {
+        if syscall_id < MAX_SYSCALL_NUM {
+            self.task_info.syscall_num[syscall_id]
+        } else {
+            0
+        }
     }
 }
 
@@ -118,6 +139,8 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    task_info: TaskInfo::default(),
+                    task_priority: TaskPriority::default(),
                 })
             },
         };
@@ -131,6 +154,17 @@ impl TaskControlBlock {
             trap_handler as usize,
         );
         task_control_block
+    }
+
+    /// Spawn a new process
+    pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> Arc<Self> {
+        let task = Arc::new(Self::new(elf_data));
+
+        // 设置父子关系
+        task.inner_exclusive_access().parent = Some(Arc::downgrade(self));
+        self.inner_exclusive_access().children.push(task.clone());
+
+        task
     }
 
     /// Load a new elf to replace the original application address space and start execution
@@ -191,6 +225,8 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    task_info: TaskInfo::default(),
+                    task_priority: TaskPriority::default(),
                 })
             },
         });

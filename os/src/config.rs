@@ -3,9 +3,9 @@
 #[allow(unused)]
 
 /// user app's stack size
-pub const USER_STACK_SIZE: usize = 4096 * 2;
+pub const USER_STACK_SIZE: usize = 4096 * 20;
 /// kernel stack size
-pub const KERNEL_STACK_SIZE: usize = 4096 * 2;
+pub const KERNEL_STACK_SIZE: usize = 4096 * 20;
 /// kernel heap size
 pub const KERNEL_HEAP_SIZE: usize = 0x200_0000;
 
@@ -21,3 +21,5 @@ pub const TRAP_CONTEXT_BASE: usize = TRAMPOLINE - PAGE_SIZE;
 pub const CLOCK_FREQ: usize = 12500000;
 /// the physical memory end
 pub const MEMORY_END: usize = 0x88000000;
+/// Max system call number
+pub const MAX_SYSCALL_NUM: usize = 500;

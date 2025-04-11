@@ -1,13 +1,12 @@
 //! Process management syscalls
+
 use alloc::sync::Arc;
 
 use crate::{
-    loader::get_app_data_by_name,
-    mm::{translated_refmut, translated_str},
-    task::{
+    config::PAGE_SIZE, loader::get_app_data_by_name, mm::{translated_byte_buffer, translated_refmut, translated_str, MapPermission, VirtAddr}, task::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
         suspend_current_and_run_next,
-    },
+    }, timer::get_time_us
 };
 
 #[repr(C)]
@@ -105,30 +104,77 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// YOUR JOB: get time with second and microsecond
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
-pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
+pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
     trace!(
         "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    let us = get_time_us();
+    let time = TimeVal {
+        sec: us / 1_000_000,
+        usec: us % 1_000_000,
+    };
+
+    let mut time = &time as *const TimeVal as *const u8;
+
+    let buffers = translated_byte_buffer(
+        current_user_token(),
+        ts as *const _,
+        core::mem::size_of::<TimeVal>(),
+    );
+
+    for buffer in buffers {
+        buffer.copy_from_slice(unsafe { core::slice::from_raw_parts(time, buffer.len()) });
+        unsafe {
+            time = time.add(buffer.len());
+        }
+    }
+
+    0
 }
 
 /// YOUR JOB: Implement mmap.
-pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
+pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
     trace!(
         "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+
+    if start & (PAGE_SIZE - 1) != 0 {
+        return -1;
+    }
+
+    if port & 0x7 == 0 || port & !0x7 != 0 {
+        return -1;
+    }
+
+    let map_permmision = MapPermission::from_bits_truncate(((port as u8) << 1) | (1 << 4));
+
+    let end = VirtAddr::from((start + len + PAGE_SIZE - 1) / PAGE_SIZE * PAGE_SIZE);
+    let start = VirtAddr::from(start);
+
+    let task = current_task().unwrap();
+    let mut task = task.inner_exclusive_access();
+    let memory_set = &mut task.memory_set;
+
+    memory_set.try_insert_framed_area(start, end, map_permmision)
 }
 
 /// YOUR JOB: Implement munmap.
-pub fn sys_munmap(_start: usize, _len: usize) -> isize {
+pub fn sys_munmap(start: usize, len: usize) -> isize {
     trace!(
         "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    if start & (PAGE_SIZE - 1) != 0 {
+        return -1;
+    }
+
+    let task = current_task().unwrap();
+    let mut task = task.inner_exclusive_access();
+    let memory_set = &mut task.memory_set;
+
+    memory_set.try_remove_area(VirtAddr::from(start), VirtAddr::from(start + len))
 }
 
 /// change data segment size
@@ -143,19 +189,41 @@ pub fn sys_sbrk(size: i32) -> isize {
 
 /// YOUR JOB: Implement spawn.
 /// HINT: fork + exec =/= spawn
-pub fn sys_spawn(_path: *const u8) -> isize {
+pub fn sys_spawn(path: *const u8) -> isize {
     trace!(
         "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+
+    let token = current_user_token();
+    let path = translated_str(token, path);
+
+    info!("kernel: sys_spawn path: {}", path);
+
+    if let Some(data) = get_app_data_by_name(path.as_str()) {
+        let cur_task = current_task().unwrap();
+        let new_task = cur_task.spawn(data);
+        let pid = new_task.pid.0 as isize;
+        add_task(new_task);
+        pid
+    } else {
+        -1
+    }
 }
 
 // YOUR JOB: Set task priority.
-pub fn sys_set_priority(_prio: isize) -> isize {
+pub fn sys_set_priority(prio: isize) -> isize {
     trace!(
         "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+
+    if prio < 2 {
+        return -1;
+    }
+
+    let task = current_task().unwrap();
+    task.inner_exclusive_access().task_priority.set_priority(prio as usize);
+
+    prio
 }
